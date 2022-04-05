@@ -1,0 +1,182 @@
+
+@author: lauriannemoriceau : PROJET
+"""
+# Import des packages utiles au projet
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier, export_graphviz
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression, RidgeClassifier, SGDClassifier
+from sklearn import preprocessing as pp
+from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
+from graphviz import Source
+from itertools import cycle
+
+
+dir_res = r'/Users/lauriannemoriceau/Documents/M2 EKAP'
+
+#jeu d'entraînement
+fraude_train=pd.read_csv("/Users/lauriannemoriceau/Documents/M2 EKAP/Scoring python/fraude_mobile_phone_ech/fraude_mobile_phone_ech_train.csv",sep=",")
+fraude_train.shape
+fraude_train.columns
+
+#jeu test
+fraude_test=pd.read_csv("/Users/lauriannemoriceau/Documents/M2 EKAP/Scoring python/fraude_mobile_phone_ech/fraude_mobile_phone_ech_test.csv",sep=",")
+fraude_test.shape
+
+#compiler df 
+fraude_train["echantillon"]="train"
+fraude_test["echantillon"]="test"
+
+#pandas concat
+frames=[fraude_train,fraude_test]
+new_df=pd.concat(frames,axis=0)
+new_df.shape
+
+#regénérer index 
+new_df=new_df.reset_index(drop=True)
+
+#Création train et test index
+train_index=list[(new_df.echantillon=='train')].index
+train_index[:100]  #100 premiers
+train_index[-100:] #100 derniers
+test_index=list(new_df[(new_df.echantillon=='test')].index)
+
+#autre méthode pour générer indice de 0 à 750.000
+test_index=range(500000,750000,1)
+new_df.loc[test_index,:]
+train_index=range(500000)
+new_df.loc[train_index,:]
+
+#Préparation de Y et des variables explicatives
+#on tej isflaggedFraud et échantillon
+new_df=new_df.drop(columns=['echantillon','isFlaggedFraud'])
+new_df.shape
+
+Y=new_df[target] #On stock Y dans une série (df avec 1 seule colonne)
+X=new_df.drop(columns=target).copy() #.copy sinon fonctionne pas
+
+del new_df
+del fraude_train
+del fraude_test
+
+
+#stats
+for ech in [train_index,test_index]
+    print(Y[ech].value_counts())
+    print(Y[ech].value_counts(normalize=True))
+
+
+# Récupération du typage des variables
+data_type = pd.DataFrame(X.dtypes.astype(str), columns=['type'])
+
+# Gestion des variables catégorielles et transformation en indicatrices (dummies)
+lvar_obj = list(data_type[data_type.type=='object'].index)
+X = pd.get_dummies(data = X, columns = lvar_obj, drop_first = True)
+X_col = list(X.columns)
+
+# Standardisation des variables pour les régressions logistiques
+std = pp.StandardScaler()
+std.fit(X.loc[train_index])
+X_std = pd.DataFrame(data = std.transform(X), columns = X_col)
+
+# Spécification des modèles
+tree = DecisionTreeClassifier(min_samples_leaf = 200, max_leaf_nodes = 35) #max_depth = 4, 
+lg = LogisticRegression(solver = 'lbfgs')
+ridge = RidgeClassifier(alpha=.005, fit_intercept=True, normalize=True,
+                                          copy_X=True, max_iter=200, tol=0.01, 
+                                          class_weight=None, solver='auto', 
+                                          random_state=0)          
+elastic_net = SGDClassifier(loss = "log", penalty="elasticnet", alpha = 0.005, max_iter = 300, 
+                                         l1_ratio=0.25, fit_intercept=True, shuffle=True, 
+                                         verbose=0, epsilon=0.1, n_jobs=-1, random_state=0, 
+                                         learning_rate='optimal', eta0=0, power_t=0.5, class_weight=None, 
+                                         warm_start=False, average=False, tol = None)
+
+rf = RandomForestClassifier(n_estimators=200, criterion='gini', max_depth=12, 
+                            min_samples_split=10, min_samples_leaf=20, min_weight_fraction_leaf=0,
+                            max_features='auto', max_leaf_nodes=None, bootstrap=True, 
+                            oob_score=False, n_jobs=-1, random_state=0, verbose=0,
+                            warm_start=False, class_weight=None)
+
+dic_models = {'Arbre' : tree, 'RegLog' : lg, 'Ridge' : ridge, 'RL_ElasticNet' : elastic_net, 'RF' : rf}
+dic_roc = {}
+
+for mod in dic_models.keys():
+    clf = dic_models[mod]
+    print('\n' + '*'*45 + '\n**   MODELE ' + mod + '\n' + '*'*45 + '')
+    
+    if (type(clf) == LogisticRegression) | (type(clf) == RidgeClassifier) | (type(clf) == SGDClassifier):
+        clf.fit(X_std.loc[train_index], Y[train_index])
+        try : proba = clf.predict_proba(X_std)[:, 1]
+        except : 
+            decision = clf.decision_function(X_std) # Regression logistique Ridge qui n'a pas de fonction predic_proba
+            proba = np.exp(decision) / (1 + np.exp(decision))    
+    else : 
+        clf.fit(X.loc[train_index], Y[train_index])
+        proba = clf.predict_proba(X)[:, 1]
+    
+    y_pred = (proba > Y.mean()).astype('int8')
+    #y_pred = (proba > 0.6).astype('int8')
+    #y_pred = clf.predict(X)  # A n'utiliser que lorsque Y est équilibrée
+    
+    # Calcul et affichage des matrices de confusions et des courbes ROC par échantillon
+    for ech, ech_name in zip([train_index, test_index], ["train", "test"]):
+        cm = confusion_matrix(Y[ech], y_pred[ech])
+        print('*'*45 + '\nEchantillon ' + ech_name)
+        print('Matrice de confusion')
+        print('Effectifs')
+        print(cm)
+        cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        print('% lignes')
+        print(cm_norm)
+        print('\nBilan du modèle ' + mod)
+        cr = classification_report(Y[ech], y_pred[ech], labels=None, target_names=None, sample_weight=None, digits=2, output_dict=False)
+        print(cr)
+        
+        fpr, tpr, thresholds = roc_curve(Y[ech], proba[ech])
+        if ech_name == 'test' :
+            dic_roc[mod] = {}
+            dic_roc[mod]['fpr']= fpr
+            dic_roc[mod]['tpr']= tpr
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, lw=2, alpha=0.3,
+                 label='Echantillon ' + ech_name + ' (AUC = %0.3f)' % roc_auc)
+    
+    plt.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
+             label='Sélection aléatoire', alpha=.8)
+    plt.xlim([-0.05, 1.05])
+    plt.ylim([-0.05, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(mod + ' - Courbe ROC')
+    plt.legend(loc="lower right")
+    plt.show()
+    
+    # Affichage de l'arbre et enregistrement au format png
+    if type(clf)==DecisionTreeClassifier :
+        dot_data = export_graphviz(clf, out_file=None, feature_names = X.columns, rounded = True, proportion = True, 
+                        precision = 3, filled = True)
+        graph = Source(dot_data)
+        graph.format = 'png' # 'pdf'
+        graph.render('tree', directory = dir_res, view = True)
+
+# Graphique de comparaison des modèles - Courbes ROC - Echantillon test
+colors = cycle(['seagreen', 'red', 'rosybrown', 'darkorange', 'blue', 'yellowgreen', 'sandybrown', 'gold'])
+for mod, color in zip(dic_roc.keys(), colors):
+    fpr = dic_roc[mod]['fpr']
+    tpr = dic_roc[mod]['tpr']
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, lw=2, color=color, alpha=0.3, label=mod + ' (AUC = %0.3f)' % roc_auc) 
+    
+plt.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r', label='Sélection aléatoire', alpha=.8)
+plt.xlim([-0.05, 1.05])
+plt.ylim([-0.05, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Comparaison de modèles - Courbe ROC\nEchantillon test')
+plt.legend(loc="lower right")
+plt.show()
+
